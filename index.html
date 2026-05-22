@@ -64,7 +64,6 @@
       pointer-events: none;
     }
 
-    /* Top bar */
     #top-bar {
       position: absolute;
       top: 0; left: 0; right: 0;
@@ -106,7 +105,6 @@
       letter-spacing: 0.5px;
     }
 
-    /* Center */
     #center-content {
       flex: 1;
       display: flex;
@@ -154,7 +152,6 @@
     #wifi-text { font-size: 18px; color: var(--white); }
     #wifi-text span { font-weight: 600; color: var(--ember); }
 
-    /* Bottom bar */
     #bottom-bar {
       position: absolute;
       bottom: 0; left: 0; right: 0;
@@ -186,7 +183,6 @@
     #status-text { font-size: 14px; color: var(--success); font-weight: 500; }
 
     #qr-block { display: flex; align-items: flex-end; gap: 16px; }
-
     #qr-label { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
     #qr-label .label-top { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
     #qr-label .label-main { font-size: 16px; font-weight: 600; color: var(--white); }
@@ -203,7 +199,6 @@
 
     #qr-code-wrapper canvas { width: 90px !important; height: 90px !important; }
 
-    /* Casting overlay */
     #casting-overlay {
       position: absolute; inset: 0;
       background: var(--navy);
@@ -226,7 +221,6 @@
 
     #casting-label { font-size: 20px; color: var(--muted); }
 
-    /* Message overlay */
     #message-overlay {
       position: absolute; inset: 0;
       display: none;
@@ -279,7 +273,6 @@
       line-height: 1.3;
     }
 
-    /* Animations */
     @keyframes pulse {
       0%, 100% { opacity: 1; transform: scale(1); }
       50% { opacity: 0.5; transform: scale(0.85); }
@@ -340,7 +333,7 @@
     <div id="bottom-bar">
       <div id="status-pill">
         <div id="status-dot"></div>
-        <div id="status-text">Connected to CastMate</div>
+        <div id="status-text">Connecting...</div>
       </div>
       <div id="qr-block">
         <div id="qr-label">
@@ -374,8 +367,8 @@
   </div>
 
   <script>
-    // ── Config ──
-    const CONFIG = {
+    // ── Config ── WIRED TO LIVE BACKEND
+    var CONFIG = {
       appId:          'D4B69672',
       deviceId:       'device-001',
       roomName:       'Room 101',
@@ -384,7 +377,7 @@
       wifiSSID:       'Formosa-Guest',
       wifiPassword:   'paradise2025',
       qrUrl:          'https://castmate-receiver-mvvm.vercel.app',
-      wsUrl:          null,
+      wsUrl:          'wss://web-production-ef761.up.railway.app/ws/device-001',
       hotelLogoUrl:   null,
     };
 
@@ -401,9 +394,9 @@
 
     // ── Clock ──
     function updateClock() {
-      const now = new Date();
-      const h   = now.getHours().toString().padStart(2, '0');
-      const m   = now.getMinutes().toString().padStart(2, '0');
+      var now = new Date();
+      var h   = now.getHours().toString().padStart(2, '0');
+      var m   = now.getMinutes().toString().padStart(2, '0');
       document.getElementById('clock').textContent = h + ':' + m;
     }
     updateClock();
@@ -426,11 +419,11 @@
       urgent     = urgent     || false;
       durationMs = durationMs || 30000;
 
-      const overlay = document.getElementById('message-overlay');
-      const card    = document.getElementById('message-card');
-      const body    = document.getElementById('message-body');
-      const title   = document.getElementById('message-title');
-      const icon    = document.getElementById('message-icon');
+      var overlay = document.getElementById('message-overlay');
+      var card    = document.getElementById('message-card');
+      var body    = document.getElementById('message-body');
+      var title   = document.getElementById('message-title');
+      var icon    = document.getElementById('message-icon');
 
       body.textContent = text;
 
@@ -456,37 +449,61 @@
 
     // ── WebSocket ──
     var ws = null;
+    var wsReconnectTimer = null;
+
+    function setStatus(text, connected) {
+      document.getElementById('status-text').textContent = text;
+      document.getElementById('status-dot').style.background = connected ? '#1D9E75' : '#E8651A';
+    }
 
     function connectWebSocket() {
       if (!CONFIG.wsUrl) {
         console.log('[CastMate] No WebSocket URL — standalone mode.');
+        setStatus('Standalone mode', false);
         return;
       }
+
+      console.log('[CastMate] Connecting to:', CONFIG.wsUrl);
+      setStatus('Connecting...', false);
+
       ws = new WebSocket(CONFIG.wsUrl);
+
       ws.onopen = function() {
         console.log('[CastMate] WebSocket connected.');
-        document.getElementById('status-text').textContent = 'Connected to CastMate';
+        setStatus('Connected to CastMate', true);
+        if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
         ws.send(JSON.stringify({
-          type: 'register',
+          type:     'register',
           deviceId: CONFIG.deviceId,
-          room: CONFIG.roomName,
+          room:     CONFIG.roomName,
           property: CONFIG.propertyName
         }));
       };
+
       ws.onmessage = function(event) {
         try { handleCommand(JSON.parse(event.data)); }
         catch(e) { console.error('[CastMate] Bad command:', e); }
       };
+
       ws.onclose = function() {
-        document.getElementById('status-text').textContent = 'Reconnecting...';
-        setTimeout(connectWebSocket, 5000);
+        console.log('[CastMate] WebSocket disconnected. Reconnecting in 5s...');
+        setStatus('Reconnecting...', false);
+        wsReconnectTimer = setTimeout(connectWebSocket, 5000);
       };
-      ws.onerror = function(e) { console.error('[CastMate] WS error:', e); };
+
+      ws.onerror = function(e) {
+        console.error('[CastMate] WS error:', e);
+        setStatus('Connection error', false);
+      };
     }
 
     // ── Command handler ──
     function handleCommand(cmd) {
+      console.log('[CastMate] Command received:', cmd.type);
       switch(cmd.type) {
+        case 'registered':
+          setStatus('Connected to CastMate', true);
+          break;
         case 'push_message':
           showMessage(cmd.text, cmd.urgent, cmd.duration ? cmd.duration * 1000 : 30000);
           break;
@@ -513,28 +530,23 @@
       }
     }
 
-    // ── THE FIX: wait for Cast SDK to be ready ──
+    // ── Cast SDK — wait for it to be ready ──
     window['__onGoogleCastApiAvailable'] = function(isAvailable) {
       if (!isAvailable) {
         console.error('[CastMate] Cast SDK not available.');
         return;
       }
-
       console.log('[CastMate] Cast SDK ready.');
-
       var context       = cast.framework.CastReceiverContext.getInstance();
       var playerManager = context.getPlayerManager();
-
       context.addEventListener(
         cast.framework.system.EventType.SENDER_CONNECTED,
         function(e) { console.log('[CastMate] Sender connected:', e.senderId); }
       );
-
       context.addEventListener(
         cast.framework.system.EventType.SENDER_DISCONNECTED,
         function(e) { console.log('[CastMate] Sender disconnected:', e.senderId); }
       );
-
       playerManager.addEventListener(
         cast.framework.events.EventType.MEDIA_STATUS,
         function(e) {
@@ -546,12 +558,11 @@
           }
         }
       );
-
       context.start({ disableIdleTimeout: true });
       console.log('[CastMate] Receiver started. App ID: D4B69672');
     };
 
-    // ── Init (no Cast dependency) ──
+    // ── Init ──
     applyConfig(CONFIG);
     renderQR(CONFIG.qrUrl);
     connectWebSocket();
